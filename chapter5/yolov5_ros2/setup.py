@@ -31,6 +31,7 @@ setup(
             'object_detection_srv = yolov5_ros2.object_detection_srv:main',
             'ore_object = yolov5_ros2.ore_object:main',
             'ore_object2 = yolov5_ros2.ore_object2:main',
+			'nav_object = yolov5_ros2.nav_object:main',
         ],
     },
 )
