@@ -8,10 +8,10 @@ from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import TransformStamped
 from cv_bridge import CvBridge, CvBridgeError
 from rclpy.utilities import remove_ros_args
-from message_filters import Subscriber, ApproximateTimeSynchronizer
 from tf2_ros import TransformBroadcaster
 from yolov5_ros2.detector import Detector, parse_opt
 from nav2_msgs.action import NavigateToPose
+from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 class ObjectDetection(Node):
 
@@ -26,22 +26,21 @@ class ObjectDetection(Node):
         self.bridge = CvBridge()
         self.node = rclpy.create_node('nav2_send_goal')
         self.client = ActionClient(self.node, NavigateToPose, 'navigate_to_pose')
-        self.sub_info = Subscriber(
-            self, CameraInfo, 'camera/aligned_depth_to_color/camera_info')
-        self.sub_color = Subscriber(
-            self, Image, 'camera/color/image_raw')
-        self.sub_depth = Subscriber(
-            self, Image, 'camera/aligned_depth_to_color/image_raw')
+
         self.ts = ApproximateTimeSynchronizer(
-            [self.sub_info, self.sub_color, self.sub_depth], 10, 0.1)
+            [Subscriber(self, CameraInfo, 'camera/aligned_depth_to_color/camera_info'),
+             Subscriber(self, Image, 'camera/color/image_raw'),
+             Subscriber(self, Image, 'camera/aligned_depth_to_color/image_raw')],
+            slop=0.1, queue_size=10)  # 追加: queue_sizeを設定
         self.ts.registerCallback(self.images_callback)
+
         self.broadcaster = TransformBroadcaster(self)
 
-    async def send_goal_async(self, goal_msg):
+    def send_goal(self, goal_msg):
         goal_msg.pose.header.stamp = self.node.get_clock().now().to_msg()
         goal_msg.pose.header.frame_id = 'map'
-        goal_msg.pose.pose.position.x = 2
-        goal_msg.pose.pose.position.y = 0
+        goal_msg.pose.pose.position.x = 2.0
+        goal_msg.pose.pose.position.y = 0.0
         goal_msg.pose.pose.position.z = 0.2
         goal_msg.pose.pose.orientation.x = 0.0
         goal_msg.pose.pose.orientation.y = 0.0
@@ -49,7 +48,7 @@ class ObjectDetection(Node):
         goal_msg.pose.pose.orientation.w = 1.0
 
         send_goal_future = self.client.send_goal_async(goal_msg)
-        await send_goal_future
+        rclpy.spin_until_future_complete(self.node, send_goal_future)
 
     def images_callback(self, msg_info, msg_color, msg_depth):
         self.goal_msg = NavigateToPose.Goal()
@@ -85,14 +84,15 @@ class ObjectDetection(Node):
             depth = np.median(img_depth[v1:v2+1, u1:u2+1])
             if depth != 0:
                 z = depth * 1e-3
-                fx = msg_info.k[0]
-                fy = msg_info.k[4]
-                cx = msg_info.k[2]
-                cy = msg_info.k[5]
+                fx = float(msg_info.k[0])
+                fy = float(msg_info.k[4])
+                cx = float(msg_info.k[2])
+                cy = float(msg_info.k[5])
                 x = z / fx * (u - cx)
                 y = z / fy * (v - cy)
                 self.get_logger().info(
                     f'{target.name} ({x:.3f}, {y:.3f}, {z:.3f})')
+                self.send_goal(self.goal_msg)
                 ts = TransformStamped()
                 ts.header = msg_depth.header
                 ts.child_frame_id = self.frame_id
@@ -100,10 +100,6 @@ class ObjectDetection(Node):
                 ts.transform.translation.y = y
                 ts.transform.translation.z = z
                 self.broadcaster.sendTransform(ts)
-
-                self.get_logger().info("Before sending goal")
-                self.send_goal_async(self.goal_msg)
-                self.get_logger().info("After sending goal")
 
         img_depth *= 16
         if target is not None:
@@ -123,4 +119,7 @@ def main():
     except KeyboardInterrupt:
         pass
     rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
 
