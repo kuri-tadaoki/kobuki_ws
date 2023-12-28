@@ -1,24 +1,17 @@
 import sys
 import cv2
 import numpy as np
-
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from rclpy.action import ActionClient
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import TransformStamped
 from cv_bridge import CvBridge, CvBridgeError
 from rclpy.utilities import remove_ros_args
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 from tf2_ros import TransformBroadcaster
-
 from yolov5_ros2.detector import Detector, parse_opt
 from nav2_msgs.action import NavigateToPose
-from geometry_msgs.msg import PoseStamped,Pose
-from geometry_msgs.msg import TransformStamped
-from nav_msgs.msg import Odometry
-import tf2_py
-from std_msgs.msg import Header
 
 class ObjectDetection(Node):
 
@@ -29,27 +22,41 @@ class ObjectDetection(Node):
         self.frame_id = 'target'
 
         self.detector = Detector(**args)
-
+        self.goal_msg = None 
         self.bridge = CvBridge()
-
+        self.node = rclpy.create_node('nav2_send_goal')
+        self.client = ActionClient(self.node, NavigateToPose, 'navigate_to_pose')
         self.sub_info = Subscriber(
             self, CameraInfo, 'camera/aligned_depth_to_color/camera_info')
         self.sub_color = Subscriber(
             self, Image, 'camera/color/image_raw')
         self.sub_depth = Subscriber(
             self, Image, 'camera/aligned_depth_to_color/image_raw')
-
-        self.sub_odom = Subscriber(self, Odometry, '/odom')
-
         self.ts = ApproximateTimeSynchronizer(
-            [self.sub_info, self.sub_color, self.sub_depth, self.sub_odom], 10, 0.1)
+            [self.sub_info, self.sub_color, self.sub_depth], 10, 0.1)
         self.ts.registerCallback(self.images_callback)
         self.broadcaster = TransformBroadcaster(self)
 
-    def images_callback(self, msg_info, msg_color, msg_depth, msg_odom):
+    async def send_goal_async(self, goal_msg):
+        goal_msg.pose.header.stamp = self.node.get_clock().now().to_msg()
+        goal_msg.pose.header.frame_id = 'map'
+        goal_msg.pose.pose.position.x = 2
+        goal_msg.pose.pose.position.y = 0
+        goal_msg.pose.pose.position.z = 0.2
+        goal_msg.pose.pose.orientation.x = 0.0
+        goal_msg.pose.pose.orientation.y = 0.0
+        goal_msg.pose.pose.orientation.z = 0.0
+        goal_msg.pose.pose.orientation.w = 1.0
+
+        send_goal_future = self.client.send_goal_async(goal_msg)
+        await send_goal_future
+
+    def images_callback(self, msg_info, msg_color, msg_depth):
+        self.goal_msg = NavigateToPose.Goal()
+        self.get_logger().info("Callback called")
         try:
-            img_color = CvBridge().imgmsg_to_cv2(msg_color, 'bgr8')
-            img_depth = CvBridge().imgmsg_to_cv2(msg_depth, 'passthrough')
+            img_color = self.bridge.imgmsg_to_cv2(msg_color, 'bgr8')
+            img_depth = self.bridge.imgmsg_to_cv2(msg_depth, 'passthrough')
         except CvBridgeError as e:
             self.get_logger().warn(str(e))
             return
@@ -93,10 +100,10 @@ class ObjectDetection(Node):
                 ts.transform.translation.y = y
                 ts.transform.translation.z = z
                 self.broadcaster.sendTransform(ts)
-			
-                self.get_logger().info('subscribed, "%s"' % msg_odom.data)
 
-				
+                self.get_logger().info("Before sending goal")
+                self.send_goal_async(self.goal_msg)
+                self.get_logger().info("After sending goal")
 
         img_depth *= 16
         if target is not None:
@@ -107,7 +114,6 @@ class ObjectDetection(Node):
         cv2.imshow('depth', img_depth)
         cv2.waitKey(1)
 
-
 def main():
     rclpy.init()
     opt = parse_opt(remove_ros_args(args=sys.argv))
@@ -117,3 +123,4 @@ def main():
     except KeyboardInterrupt:
         pass
     rclpy.shutdown()
+
