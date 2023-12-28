@@ -31,7 +31,7 @@ class ObjectDetection(Node):
             [Subscriber(self, CameraInfo, 'camera/aligned_depth_to_color/camera_info'),
              Subscriber(self, Image, 'camera/color/image_raw'),
              Subscriber(self, Image, 'camera/aligned_depth_to_color/image_raw')],
-            slop=0.1, queue_size=10)  # 追加: queue_sizeを設定
+            slop=0.1, queue_size=10) 
         self.ts.registerCallback(self.images_callback)
 
         self.broadcaster = TransformBroadcaster(self)
@@ -52,7 +52,7 @@ class ObjectDetection(Node):
 
     def images_callback(self, msg_info, msg_color, msg_depth):
         self.goal_msg = NavigateToPose.Goal()
-        self.get_logger().info("Callback called")
+        #self.get_logger().info("Callback called")
         try:
             img_color = self.bridge.imgmsg_to_cv2(msg_color, 'bgr8')
             img_depth = self.bridge.imgmsg_to_cv2(msg_depth, 'passthrough')
